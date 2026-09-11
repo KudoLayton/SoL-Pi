@@ -4,7 +4,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 
 interface PackReport {
@@ -12,14 +12,24 @@ interface PackReport {
 }
 
 function packedFiles(): string[] {
-	const result = spawnSync("npm", ["pack", "--dry-run", "--json"], {
+	const npmCli = process.env.npm_execpath;
+	const args = ["pack", "--dry-run", "--json"];
+	const command = npmCli && existsSync(npmCli)
+		? { file: process.execPath, args: [npmCli, ...args] }
+		: process.platform === "win32"
+			? { file: "pwsh.exe", args: ["-NoLogo", "-NoProfile", "-Command", "npm pack --dry-run --json"] }
+			: { file: "npm", args };
+	const result = spawnSync(command.file, command.args, {
 		cwd: process.cwd(),
 		encoding: "utf8",
 		timeout: 25_000,
+		windowsHide: true,
 	});
+	if (result.error) throw result.error;
 	if (result.status !== 0) throw new Error(result.stderr || result.stdout);
-	const report = JSON.parse(result.stdout) as PackReport[];
-	return report[0]?.files.map((file) => file.path) ?? [];
+	const report = JSON.parse(result.stdout) as PackReport[] | Record<string, PackReport>;
+	const packages = Array.isArray(report) ? report : Object.values(report);
+	return packages[0]?.files.map((file) => file.path) ?? [];
 }
 
 describe("published package", () => {

@@ -25,6 +25,14 @@ The queue covers only fused operations registered by this SoL-Pi instance. Exter
 
 ObservationPack changes only the messages projected through the public `context` event. Stored session history remains intact. Original bytes and the JSONL ledger live under the session-derived SoL-Pi directory.
 
+Stored-object reuse and recall reject symbolic links, including Windows directory junctions in ancestor paths. They compare file identities before and after opening and reading, use the same handle for the read, and close it on failure. Platforms exposing `O_NOFOLLOW` retain that flag. Node does not expose it on Windows; the additional checks detect observed replacements but are not an atomic OS-level defense against every concurrent filesystem attack. Session storage must remain under a trusted user-controlled directory. Symlinked session-storage ancestors are deliberately unsupported.
+
+## Windows validation
+
+Run `npm ci --ignore-scripts`, `npm run check`, and `node scripts/check-pi-compat.mjs` from PowerShell. Package tests launch the npm CLI through Node when `npm_execpath` is available, with a PowerShell fallback on Windows, and accept both npm 11 array and npm 12 object pack reports. POSIX `0600` assertions remain POSIX-only: Node mode bits do not prove Windows ACL isolation. Regular-file and archive integrity checks run on both platforms.
+
+The conservative Windows installation enables ActionFusion and ObservationPack only; it is separate from the managed all-enabled profile in `agents-install.md`. Keep EPR and OCC disabled until their additional usage and continuation behavior has been validated with the installed extension set. ActionFusion still uses Pi's bash launcher; pass a PowerShell command to `then_run` for Windows work. A failed follow-up command does not undo the preceding file change.
+
 ## Evidence-Preserving Reducer
 
 The reducer handles public `tool_result` events and resolves the configured reducer provider/model through Pi's model registry before calling `ExtensionContext.modelRegistry.complete()` when available. For the Pi 0.81.1 fork, which exposes no registry `complete()` method, it resolves authentication for that reducer model through `getApiKeyAndHeaders()` and calls the shared `@earendil-works/pi-ai/compat` completion API. The reducer preserves the original result whenever the configured reducer model is unavailable or eligibility, model-call, schema, source-hash, exact-quote, size, or likely-secret checks fail.
