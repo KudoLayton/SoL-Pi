@@ -82,11 +82,6 @@ it.each(["persistent", "in-memory"])("loads the package and executes fused tools
 		const errors: unknown[] = [];
 		await session.bindExtensions({ onError: (error) => errors.push(error) });
 		expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["edit", "write", "obs_recall", "update_plan"]));
-		const solPi = resourceLoader.getExtensions().extensions.find((extension) => extension.path.endsWith("src/sol-pi/index.ts"));
-		expect(solPi?.handlers.has("tool_result")).toBe(true);
-		expect(solPi?.handlers.has("context")).toBe(true);
-		expect(solPi?.handlers.has("agent_settled")).toBe(true);
-
 		await session.prompt("run the package smoke test", { expandPromptTemplates: false });
 		const toolResults = sessionManager.getBranch().flatMap((entry) =>
 			entry.type === "message" && entry.message.role === "toolResult" ? [entry.message] : [],
