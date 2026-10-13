@@ -27,6 +27,7 @@ for (const version of versions) {
 	const guidePath = join(cwd, "agents-install.md");
 	await writeFile(guidePath, (await readFile(guidePath, "utf8")).replaceAll(originalVersion, version));
 	for (const name of ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-tui"]) manifest.devDependencies[`@earendil-works/${name}`] = version;
+	if (version === "1.2.0") manifest.devDependencies["@narumitw/pi-codex-compact"] = "0.56.0";
 	await writeFile(join(cwd, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
 	const agentDir = join(cwd, "isolated-agent");
 	await mkdir(agentDir);
