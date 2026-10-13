@@ -18,6 +18,7 @@ The project file replaces the global file. SoL-Pi does not merge them.
 {
   "version": 1,
   "actionFusion": false,
+  "actionFusionShell": "bash",
   "observationPack": false,
   "evidencePreservingReducer": false,
   "evidencePreservingReducerProvider": "provider-id",
@@ -42,6 +43,7 @@ This preflight does not make every valid SoL-Pi configuration all-enabled. Witho
 ## Feature behavior
 
 - `actionFusion`: registers SoL-Pi replacements for Pi's `edit` and `write` tools.
+- `actionFusionShell`: `"bash"` (default) or `"powershell"`. Selects the shell for `then_run`; the latter launches PowerShell 7 (`pwsh`) directly without Bash. Invalid values stop loading. The selection is explicit and does not change automatically with the OS.
 - `observationPack`: registers `obs_recall` and a provider-context projection handler.
 - `evidencePreservingReducer`: registers a `tool_result` handler and delegates long diagnostic-log reduction to the configured reducer provider/model.
 - `evidencePreservingReducerProvider`: provider namespace used to resolve the reducer model through Pi's model registry.
@@ -68,7 +70,17 @@ The configured ratio stays fixed for the loaded extension. The mechanism stores 
 
 SoL-Pi reads no dedicated environment variables. Evidence-Preserving Reducer resolves its configured reducer provider/model through `ExtensionContext.modelRegistry` and uses Pi-managed authentication. If the configured reducer model is unavailable or the nested model call fails, the original tool result continues unchanged.
 
-SoL-Pi does not configure shell paths, command prefixes, storage paths, run IDs, provider URLs, reasoning levels, timeouts, or per-mechanism enable flags through environment variables. Apart from the EPR reducer provider/model route in `sol-pi.json`, model selection remains with Pi. Action Fusion uses Pi's default shell behavior. Persistent artifacts are derived from Pi's session directory and session ID.
+SoL-Pi does not configure shell paths, command prefixes, storage paths, run IDs, provider URLs, reasoning levels, timeouts, or per-mechanism enable flags through environment variables. Apart from the EPR reducer provider/model route in `sol-pi.json`, model selection remains with Pi. Action Fusion uses Pi's default Bash launcher unless `actionFusionShell` explicitly selects native PowerShell 7. Persistent artifacts are derived from Pi's session directory and session ID.
+
+## Native PowerShell follow-up commands
+
+With `actionFusionShell: "powershell"`, `then_run.command` is PowerShell code, not Bash code. SoL-Pi runs `pwsh -NoLogo -NoProfile -NonInteractive -File` with a temporary UTF-8 script, the tool's working directory and inherited environment. No shell-path setting, profile loading, execution-policy bypass, or automatic fallback is provided. PowerShell 5.1 is not supported. Programmatic `ActionFusionOptions.shell` uses the same values; `bashOptions` cannot be combined with PowerShell mode.
+
+The executable and timeout are checked before mutation. A supplied timeout must be finite and positive; omission imposes no timeout. PowerShell errors and nonzero native exit codes fail the follow-up. The last native exit code is propagated; explicitly check intermediate native commands when chaining multiple commands. An explicit `exit` retains its meaning. Command failure, cancellation, or timeout after mutation does **not** roll back the edit/write.
+
+Cancellation and timeout request process-tree termination (`taskkill /T /F` on Windows, process-group termination on POSIX). Cleanup failures are reported. Detached processes and forced termination of Pi itself are not guaranteed to be cleaned up.
+
+Output is decoded as UTF-8. The returned tail is limited to 2,000 lines / 50 KiB, with a full-log path on truncation or failure. Separate stdout/stderr arrival order is not a guarantee of their original emission order. Command scripts are deleted on completion; output logs remain under a unique `sol-pi-pwsh-*` directory in the OS temporary directory until host/caller cleanup. Use a trusted user-owned temporary directory: POSIX mode bits do not guarantee Windows ACL isolation. ObservationPack can archive the returned tool result, but full PowerShell-log reduction by EPR is outside this profile's support guarantee.
 
 ## Trust
 

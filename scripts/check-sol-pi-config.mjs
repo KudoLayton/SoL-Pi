@@ -16,7 +16,7 @@ const DEFAULT_CACHE_WRITE_READ_RATIO = 12.5;
 const DEFAULT_EPR_REDUCER_PROVIDER = ["openai", "codex"].join("-");
 const DEFAULT_EPR_REDUCER_MODEL = ["gpt-5.6", "luna"].join("-");
 const STRING_KEYS = ["evidencePreservingReducerModel", "evidencePreservingReducerProvider"];
-const CONFIG_KEYS = new Set(["version", ...FEATURE_KEYS, ...STRING_KEYS, "cacheWriteReadRatio"]);
+const CONFIG_KEYS = new Set(["version", ...FEATURE_KEYS, ...STRING_KEYS, "cacheWriteReadRatio", "actionFusionShell"]);
 
 function fail(message) {
 	throw new Error(message);
@@ -67,7 +67,10 @@ function validateConfig(value, requireAllEnabled) {
 	}
 	if (value.version !== 1) fail("version must be 1");
 
-	const effective = { version: 1 };
+	if (Object.hasOwn(value, "actionFusionShell") && value.actionFusionShell !== "bash" && value.actionFusionShell !== "powershell") {
+		fail("actionFusionShell must be bash or powershell");
+	}
+	const effective = { version: 1, actionFusionShell: value.actionFusionShell ?? "bash" };
 	for (const key of FEATURE_KEYS) {
 		const configured = value[key];
 		if (configured !== undefined && typeof configured !== "boolean") fail(`${key} must be boolean`);

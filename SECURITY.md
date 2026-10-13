@@ -4,7 +4,8 @@ SoL-Pi is a Pi extension. It runs with the filesystem, process, network, and cre
 
 ## Sensitive behavior
 
-- Action Fusion can modify files and run shell commands requested by the model.
+- Action Fusion can modify files and run shell commands requested by the model. Opt-in native PowerShell 7 runs without a profile or execution-policy bypass, but is not sandboxed. It inherits Pi's environment. Command failures do not undo file changes.
+- Native PowerShell creates temporary scripts (removed after execution) and full output logs under unique `sol-pi-pwsh-*` directories in the OS temporary directory. Logs remain after success, failure, or cancellation for evidence access and require host/caller cleanup. These may contain secrets even with EPR/OCC disabled. Use trusted user-owned temporary and session directories; POSIX mode bits do not guarantee private Windows ACLs. Forced Pi termination may also leave command scripts behind.
 - ObservationPack stores large tool results under Pi's session directory.
 - Evidence-Preserving Reducer archives diagnostic logs locally and, when explicitly enabled, sends eligible logs through the configured reducer model using Pi-managed authentication.
 - The reducer skips text matching its likely-secret detector, but that detector is a precaution rather than a complete secret scanner. Do not enable remote reduction for workloads whose logs must remain local.

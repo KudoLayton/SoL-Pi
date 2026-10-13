@@ -5,9 +5,11 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { type BashToolOptions, createBashToolDefinition, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type BashToolOptions, createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { withFusedFileQueue } from "./file-queue.ts";
+import { checkPowerShell, runPowerShell } from "./powershell.ts";
+import type { ToolExecutionContext } from "../../tool-context.ts";
 
 export const THEN_RUN_SUCCEEDED = "[then_run:succeeded]";
 export const THEN_RUN_FAILED = "[then_run:failed]";
@@ -18,11 +20,11 @@ export interface ThenRunInput {
 	timeout?: number;
 }
 
-export function createThenRunSchema(description: string) {
+export function createThenRunSchema(description: string, shell: "bash" | "powershell" = "bash") {
 	return Type.Optional(
 		Type.Object(
 			{
-				command: Type.String({ description: "Bash command to run" }),
+				command: Type.String({ description: shell === "powershell" ? "PowerShell 7 command to run (no Bash parsing)" : "Bash command to run" }),
 				timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
 			},
 			{ description },
@@ -81,6 +83,7 @@ export async function executeMutationThenRun<TDetails>({
 	thenRun,
 	mutate,
 	bashOptions,
+	shell = "bash",
 	signal,
 	ctx,
 }: {
@@ -89,13 +92,20 @@ export async function executeMutationThenRun<TDetails>({
 	thenRun: ThenRunInput | undefined;
 	mutate: () => Promise<AgentToolResult<TDetails>>;
 	bashOptions: BashToolOptions | undefined;
+	shell?: "bash" | "powershell";
 	signal: AbortSignal | undefined;
-	ctx: ExtensionContext;
+	ctx: ToolExecutionContext;
 }): Promise<AgentToolResult<TDetails>> {
 	return withFusedFileQueue(absolutePath, async () => {
 		let mutationResult: AgentToolResult<TDetails>;
 		try {
+			signal?.throwIfAborted();
+			if (thenRun && shell === "powershell") await checkPowerShell(thenRun, signal);
+			signal?.throwIfAborted();
 			mutationResult = await mutate();
+			if (thenRun && "isError" in mutationResult && mutationResult.isError === true) {
+				throw new Error(resultText(mutationResult));
+			}
 		} catch (error) {
 			if (thenRun !== undefined) {
 				throw thenRunSkippedError(error);
@@ -108,10 +118,17 @@ export async function executeMutationThenRun<TDetails>({
 		}
 
 		await assertUnchangedBeforeCommand(absolutePath);
-		const bash = createBashToolDefinition(ctx.cwd, bashOptions);
 		try {
-			const bashResult = await bash.execute(`${toolCallId}:then_run`, thenRun, signal, undefined, ctx);
-			const output = resultText(bashResult);
+			signal?.throwIfAborted();
+			let output: string;
+			if (shell === "powershell") {
+				output = await runPowerShell(thenRun, ctx.cwd, signal);
+			} else {
+				const result = await createBashToolDefinition(ctx.cwd, bashOptions).execute(`${toolCallId}:then_run`, thenRun, signal, undefined, ctx);
+				output = resultText(result);
+				// Newer Pi versions return structured tool failures rather than throwing.
+				if ("isError" in result && result.isError === true) throw new Error(output);
+			}
 			return {
 				...mutationResult,
 				content: [

@@ -11,7 +11,7 @@ import { registerObservationPack } from "./extensions/observation-pack/index.ts"
 import { registerOnlineContextCompact } from "./extensions/online-context-compact/index.ts";
 
 export function registerConfiguredFeatures(pi: ExtensionAPI, config: SolPiConfig): void {
-	if (config.actionFusion) registerActionFusion(pi);
+	if (config.actionFusion) registerActionFusion(pi, { shell: config.actionFusionShell });
 	if (config.observationPack) registerObservationPack(pi);
 	if (config.evidencePreservingReducer) {
 		registerEvidencePreservingReducer(pi, {

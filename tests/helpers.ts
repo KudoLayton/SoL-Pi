@@ -8,6 +8,8 @@ import type { Component } from "@earendil-works/pi-tui";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { ToolExecutionContext } from "../src/sol-pi/tool-context.ts";
+
 type Handler = (event: unknown, context: ExtensionContext) => unknown | Promise<unknown>;
 
 export const plainTheme = {
@@ -177,7 +179,7 @@ export class FakePi {
 export function fakeContext(
 	sessionManager: FakeSessionManager | string,
 	overrides: Partial<ExtensionContext> = {},
-): ExtensionContext {
+): ToolExecutionContext {
 	const manager =
 		typeof sessionManager === "string" ? new FakeSessionManager([], "session-a", sessionManager) : sessionManager;
 	return {
@@ -199,5 +201,5 @@ export function fakeContext(
 		compact: () => undefined,
 		getSystemPrompt: () => "",
 		...overrides,
-	} as unknown as ExtensionContext;
+	} as unknown as ToolExecutionContext;
 }

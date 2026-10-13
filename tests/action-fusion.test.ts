@@ -10,10 +10,12 @@ import type { BashOperations, ExtensionAPI, ExtensionContext, ToolDefinition } f
 import {
 	type ActionFusionOptions,
 	assertUnchangedBeforeCommand,
+	executeMutationThenRun,
 	createActionFusionExtension,
 } from "../src/sol-pi/extensions/action-fusion/index.ts";
 import { withFusedFileQueue } from "../src/sol-pi/extensions/action-fusion/file-queue.ts";
 import { componentText, plainTheme } from "./helpers.ts";
+import type { ToolExecutionContext } from "../src/sol-pi/tool-context.ts";
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -53,7 +55,7 @@ function loadFusedTools(options?: ActionFusionOptions): FusedTools {
 	return { edit, write };
 }
 
-function createContext(cwd: string, overrides: Partial<ExtensionContext> = {}): ExtensionContext {
+function createContext(cwd: string, overrides: Partial<ExtensionContext> = {}): ToolExecutionContext {
 	return {
 		mode: "json",
 		hasUI: false,
@@ -65,7 +67,7 @@ function createContext(cwd: string, overrides: Partial<ExtensionContext> = {}): 
 		},
 		ui: {},
 		...overrides,
-	} as unknown as ExtensionContext;
+	} as unknown as ToolExecutionContext;
 }
 
 const tempDirs: string[] = [];
@@ -82,6 +84,18 @@ afterEach(async () => {
 });
 
 describe("action fusion then_run", () => {
+	it("skips follow-up commands when newer Pi returns a structured mutation failure", async () => {
+		const dir = await createTempDir();
+		const command = vi.fn(async () => ({ exitCode: 0 }));
+		await expect(executeMutationThenRun({
+			toolCallId: "structured-failure", absolutePath: join(dir, "missing"),
+			thenRun: { command: "must not execute" }, bashOptions: { operations: { exec: command } },
+			signal: undefined, ctx: createContext(dir),
+			mutate: async () => ({ content: [{ type: "text", text: "mutation denied" }], details: undefined, isError: true }),
+		})).rejects.toThrow("[then_run:skipped]");
+		expect(command).not.toHaveBeenCalled();
+	});
+
 	it("adds an optional command and timeout object to edit and write", () => {
 		const { edit, write } = loadFusedTools();
 

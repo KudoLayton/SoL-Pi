@@ -60,6 +60,15 @@ describe("SoL-Pi entrypoint", () => {
 		expect(pi.handlers.size).toBe(0);
 	});
 
+	it("keeps reducer and compaction handlers disabled in the conservative Windows profile", () => {
+		const pi = new FakePi();
+		registerConfiguredFeatures(pi.asExtensionApi(), { ...DEFAULT_CONFIG, actionFusion: true, actionFusionShell: "powershell", observationPack: true });
+		expect(pi.registeredTools.map((tool) => tool.name)).toEqual(["edit", "write", "obs_recall"]);
+		expect(pi.handlers.has("tool_result")).toBe(false);
+		expect(pi.handlers.has("session_compact")).toBe(false);
+		expect(pi.handlers.has("agent_settled")).toBe(false);
+	});
+
 	it("registers all four standalone mechanisms from one config", () => {
 		const pi = new FakePi();
 		registerConfiguredFeatures(pi.asExtensionApi(), {

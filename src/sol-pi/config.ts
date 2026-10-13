@@ -16,6 +16,7 @@ export const DEFAULT_CACHE_WRITE_READ_RATIO = 12.5;
 export interface SolPiConfig {
 	readonly version: 1;
 	readonly actionFusion: boolean;
+	readonly actionFusionShell: "bash" | "powershell";
 	readonly observationPack: boolean;
 	readonly evidencePreservingReducer: boolean;
 	readonly evidencePreservingReducerModel: string;
@@ -27,6 +28,7 @@ export interface SolPiConfig {
 export const DEFAULT_CONFIG: SolPiConfig = Object.freeze({
 	version: 1,
 	actionFusion: false,
+	actionFusionShell: "bash",
 	observationPack: false,
 	evidencePreservingReducer: false,
 	evidencePreservingReducerModel: DEFAULT_REDUCER_MODEL,
@@ -42,7 +44,7 @@ const FEATURE_KEYS = [
 	"onlineContextCompact",
 ] as const;
 const STRING_KEYS = ["evidencePreservingReducerModel", "evidencePreservingReducerProvider"] as const;
-const CONFIG_KEYS = new Set<string>(["version", ...FEATURE_KEYS, ...STRING_KEYS, "cacheWriteReadRatio"]);
+const CONFIG_KEYS = new Set<string>(["version", ...FEATURE_KEYS, ...STRING_KEYS, "cacheWriteReadRatio", "actionFusionShell"]);
 
 export function findConfigPath(
 	cwd = process.cwd(),
@@ -88,6 +90,9 @@ export function loadSolPiConfig(
 		if (record[key] !== undefined && typeof record[key] !== "boolean") {
 			throw new Error(`SoL-Pi config ${key} must be boolean: ${path}`);
 		}
+	}
+	if (Object.hasOwn(record, "actionFusionShell") && record.actionFusionShell !== "bash" && record.actionFusionShell !== "powershell") {
+		throw new Error(`SoL-Pi config actionFusionShell must be bash or powershell: ${path}`);
 	}
 	const cacheWriteReadRatio = Object.hasOwn(record, "cacheWriteReadRatio")
 		? record.cacheWriteReadRatio

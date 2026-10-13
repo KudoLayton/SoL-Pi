@@ -43,6 +43,8 @@ const WRITE_THEN_RUN_DESCRIPTION =
 	"Command to run next on this file after the write succeeds — e.g. run, build, start/restart, install, or check it; optional timeout in seconds. Skipped if the write fails; a non-zero exit is reported but keeps the write.";
 
 export interface ActionFusionOptions {
+	/** Opt-in native PowerShell 7 execution; defaults to Bash. */
+	readonly shell?: "bash" | "powershell";
 	/** Optional programmatic bash overrides, primarily for tests and embedded runtimes. */
 	readonly bashOptions?: BashToolOptions;
 	/** Overrides for the underlying built-in `edit` tool. */
@@ -67,6 +69,9 @@ function memoizeByCwd<T>(create: (cwd: string) => T): (cwd: string) => T {
 }
 
 export function createActionFusionExtension(options: ActionFusionOptions = {}): ExtensionFactory {
+	if (options.shell === "powershell" && options.bashOptions !== undefined) {
+		throw new Error("bashOptions cannot be combined with the PowerShell executor");
+	}
 	const baseEdit = memoizeByCwd((cwd: string) => createEditToolDefinition(cwd, options.editOptions));
 	const baseWrite = memoizeByCwd((cwd: string) => createWriteToolDefinition(cwd, options.writeOptions));
 
@@ -76,11 +81,11 @@ export function createActionFusionExtension(options: ActionFusionOptions = {}): 
 
 		const editParameters = Type.Object({
 			...editTemplate.parameters.properties,
-			then_run: createThenRunSchema(EDIT_THEN_RUN_DESCRIPTION),
+			then_run: createThenRunSchema(EDIT_THEN_RUN_DESCRIPTION, options.shell),
 		});
 		const writeParameters = Type.Object({
 			...writeTemplate.parameters.properties,
-			then_run: createThenRunSchema(WRITE_THEN_RUN_DESCRIPTION),
+			then_run: createThenRunSchema(WRITE_THEN_RUN_DESCRIPTION, options.shell),
 		});
 
 		pi.registerTool<typeof editParameters, EditToolDetails | undefined>({
@@ -93,6 +98,7 @@ export function createActionFusionExtension(options: ActionFusionOptions = {}): 
 					absolutePath: resolveToolPath(ctx.cwd, input.path),
 					thenRun: then_run,
 					bashOptions: options.bashOptions,
+					shell: options.shell,
 					signal,
 					ctx,
 					mutate: () => baseEdit(ctx.cwd).execute(toolCallId, editInput, signal, onUpdate, ctx),
@@ -127,6 +133,7 @@ export function createActionFusionExtension(options: ActionFusionOptions = {}): 
 					absolutePath: resolveToolPath(ctx.cwd, input.path),
 					thenRun: then_run,
 					bashOptions: options.bashOptions,
+					shell: options.shell,
 					signal,
 					ctx,
 					mutate: () => baseWrite(ctx.cwd).execute(toolCallId, writeInput, signal, onUpdate, ctx),
@@ -162,8 +169,8 @@ export {
 	THEN_RUN_SUCCEEDED,
 } from "./then-run.ts";
 
-export function registerActionFusion(pi: ExtensionAPI): void {
-	createActionFusionExtension()(pi);
+export function registerActionFusion(pi: ExtensionAPI, options: ActionFusionOptions = {}): void {
+	createActionFusionExtension(options)(pi);
 }
 
 export default registerActionFusion;

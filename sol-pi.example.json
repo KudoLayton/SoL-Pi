@@ -1,6 +1,7 @@
 {
 	"version": 1,
 	"actionFusion": false,
+	"actionFusionShell": "bash",
 	"observationPack": false,
 	"evidencePreservingReducer": false,
 	"evidencePreservingReducerProvider": "provider-id",
