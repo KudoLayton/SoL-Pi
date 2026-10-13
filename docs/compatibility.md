@@ -1,6 +1,6 @@
 # Pi Compatibility
 
-SoL-Pi is developed and tested against `@earendil-works/pi-coding-agent` 0.85.1 and remains compatible with the originally supported 0.84.2 release. The current 19 test files (140 tests), type checking, package inspection, public API checks, and offline extension startup passed on both releases. Previous checks covered the public API surface of Pi 0.81.1, the base used by the original Pi fork; they are not a current full-suite compatibility guarantee. The runtime range is deliberately expressed as a peer dependency because Pi owns installation and upgrade of its packages; it is not a guarantee for every Pi version.
+SoL-Pi's development dependency baseline is `@earendil-works/pi-coding-agent` 0.85.1, with backward compatibility for 0.84.2. The earlier baseline validation covered 19 test files (140 tests), type checking, package inspection, public API checks, and offline extension startup on both releases. Windows native-executor validation additionally covers Pi 1.2.0; see the Windows validation notes below. Previous checks covered the public API surface of Pi 0.81.1, the base used by the original Pi fork; they are not a current full-suite compatibility guarantee. The runtime range is deliberately expressed as a peer dependency because Pi owns installation and upgrade of its packages; it is not a guarantee for every Pi version.
 
 SoL-Pi imports only public package exports:
 
@@ -33,7 +33,21 @@ Stored-object reuse and recall reject symbolic links, including Windows director
 
 Run `npm ci --ignore-scripts`, `npm run check`, and `node scripts/check-pi-compat.mjs` from PowerShell. Package tests launch the npm CLI through Node when `npm_execpath` is available, with a PowerShell fallback on Windows, and accept both npm 11 array and npm 12 object pack reports. POSIX `0600` assertions remain POSIX-only: Node mode bits do not prove Windows ACL isolation. Regular-file and archive integrity checks run on both platforms.
 
-The conservative Windows installation enables ActionFusion and ObservationPack only; it is separate from the managed all-enabled profile in `agents-install.md`. Keep EPR and OCC disabled until their additional usage and continuation behavior has been validated with the installed extension set. ActionFusion still uses Pi's bash launcher; pass a PowerShell command to `then_run` for Windows work. A failed follow-up command does not undo the preceding file change.
+The conservative Windows installation enables ActionFusion and ObservationPack only; it is separate from the managed all-enabled profile in `agents-install.md`. Keep EPR and OCC disabled until their additional usage and continuation behavior has been validated with the installed extension set. ActionFusion defaults to Pi's Bash launcher. Set `actionFusionShell: "powershell"` to run PowerShell 7 directly, with no Bash dependency or fallback. `then_run.command` must use the selected shell's syntax. A failed follow-up command does not undo the preceding file change.
+
+The Windows regression suite covers existing-file case aliases, file URLs, long local paths, Unicode/quoted paths, BOM/CRLF recall, junction rejection, failed-read handle cleanup, native command failures, output truncation, cancellation, and child-process termination. UNC/network-share behavior requires an actual share and is not claimed from local-path tests. Case-alias queue tests cover existing files; creating distinct case spellings of a previously nonexistent file concurrently is not an atomic filesystem lock guarantee.
+
+PowerShell output logs remain under a user-controlled OS temporary directory; script files are removed after execution. Neither `0600` nor Node's Windows link checks establish complete ACL or race isolation. Do not use an untrusted shared storage root. PowerShell 5.1 and forced-exit cleanup are outside the support contract.
+
+Pi 1.2.0 adds capabilities to the tool execution context and can return `isError` results instead of throwing. SoL-Pi derives its context type from the public tool definition and handles both error conventions, including skipping follow-ups after structured mutation failures. CLI integration tests resolve the executable from the package's `bin` metadata rather than assuming a version-specific bundle path.
+
+The isolated matrix runs `npm ci --ignore-scripts`, `npm run check`, and the public API check for Pi 0.84.2, 0.85.1, and 1.2.0 without modifying the installed Pi. On Windows with Node 26.7.0, npm 12.0.2, and PowerShell 7.6.6, each version passed type checking, package inspection, API checks, and 23 test files (217 tests passed; one POSIX-only test skipped). This run did not execute the suite on a POSIX host. Native PowerShell integration exercises both persistent and in-memory sessions with EPR/OCC disabled. Passing these offline tests does not validate live-provider EPR/OCC behavior or arbitrary installed extension combinations.
+
+Dependency audit is a separate gate. The checkout pins `source-map-js` to 1.2.2, overrides affected `brace-expansion` versions (`>=4 <5.0.12`) to 5.0.12, and overrides affected `undici` 8.x versions (`>=8 <8.10.2`) to 8.11.2. This resolves the previously reported advisories without upgrading the selected Pi release or changing unrelated major versions. The lockfile and isolated version matrix are checked with `npm audit --audit-level=high`; the latest validation reported zero vulnerabilities for all three Pi versions. Audit results are time-dependent and must be rerun when dependencies or advisories change.
+
+These npm overrides apply to this checkout as an installation root and to its isolated validation copies. They do **not** patch an independently installed Pi or automatically override a consuming project's dependencies. Audit and update the actual host installation separately; do not use `npm audit fix --force` to silently replace its requested Pi version.
+
+Do not register this checkout alongside another SoL-Pi package that also replaces `edit`/`write`. Review other context compaction extensions independently; this Windows profile keeps OCC off and does not alter those extensions.
 
 ## Evidence-Preserving Reducer
 

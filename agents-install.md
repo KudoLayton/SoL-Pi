@@ -10,8 +10,14 @@ Installation and configuration are complete only when Pi remains unmodified, the
 - Use Node.js 22.19 or newer and the tested Pi release `@earendil-works/pi-coding-agent@0.85.1`. Treat a different Pi version as a compatibility change and rerun the full suite before using it.
 - Do not clean, reset, switch, or overwrite unrelated repository changes.
 - Do not print, log, commit, upload, or include any secret in a command line. Check only whether a credential is present.
-- Keep SoL-Pi settings in `sol-pi.json`. The Evidence-Preserving Reducer provider/model route is a SoL-Pi setting; provider URLs, credentials, the main agent model, and shell behavior remain Pi settings.
+- Keep SoL-Pi settings in `sol-pi.json`. The Evidence-Preserving Reducer provider/model route is a SoL-Pi setting; provider URLs, credentials, and the main agent model remain Pi settings. `actionFusionShell` selects the SoL-Pi follow-up executor (`bash` by default, or native PowerShell 7); it does not change Pi's other tools.
 - Keep persistent artifacts under Pi's session-derived `sol-pi/<session-id>/` root. For `--no-session` and in-memory sessions, use the automatic private directory under the system temporary directory; do not configure a separate storage path. Temporary archives remain after worker exit for callers to read, with cleanup managed by the host or caller.
+
+## Conservative Windows profile
+
+The managed all-enabled acceptance criteria below are distinct from the conservative Windows profile. For the latter, enable ActionFusion and ObservationPack, set `actionFusionShell` to `"powershell"` for native PowerShell 7, and keep EPR/OCC disabled. Validate this profile without `--require-all-enabled`. Existing configurations without the shell key retain Bash semantics. Do not silently migrate a user's configuration or enable EPR/OCC to satisfy the managed profile when the requested scope is conservative Windows support. See [configuration](docs/configuration.md) for execution, failure, cancellation, and log-retention behavior.
+
+For repeatable compatibility development, `scripts/check-pi-matrix.mjs` creates isolated copies for Pi 0.84.2, 0.85.1, and 1.2.0, including separate lockfiles and agent directories. Set `npm_execpath` to the npm CLI JavaScript path if it is not available beside Node. It runs lockfile preparation, `npm ci --ignore-scripts`, `npm run check`, API checks, and audit, records failures without hiding them, and retains logs/copies under the printed temporary directory. It never installs into the active Pi environment. The fixture's guide version is adjusted to match its development dependencies; the checkout guide is unchanged.
 
 ## Inputs
 
