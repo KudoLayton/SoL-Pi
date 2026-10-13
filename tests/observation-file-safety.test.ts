@@ -38,6 +38,28 @@ it("rejects a junction or symbolic-link ancestor", async () => {
 	await expect(readRecallChunk(join(link, "objects", "payload.txt"), 0, limits)).rejects.toMatchObject({ code: "ELOOP" });
 });
 
+it("preserves BOM and CRLF bytes during recall", async () => {
+	const { path } = await fixture();
+	const body = "\ufeff한글\r\nsecond line\r\n";
+	await writeFile(path, body);
+	expect((await readRecallChunk(path, 0, limits)).text).toBe(body);
+});
+
+it("closes the handle when reading fails and propagates access errors", async () => {
+	const { path } = await fixture();
+	const fs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+	let closed = false;
+	vi.mocked(open).mockImplementationOnce(async (...args) => {
+		const handle = await fs.open(...args);
+		const close = handle.close.bind(handle);
+		vi.spyOn(handle, "read").mockRejectedValueOnce(Object.assign(new Error("file locked"), { code: "EACCES" }));
+		vi.spyOn(handle, "close").mockImplementation(async () => { await close(); closed = true; });
+		return handle;
+	});
+	await expect(readRecallChunk(path, 0, limits)).rejects.toMatchObject({ code: "EACCES" });
+	expect(closed).toBe(true);
+});
+
 it("rejects directories as observations", async () => {
 	const { root } = await fixture();
 	await expect(readRecallChunk(root, 0, limits)).rejects.toThrow(/regular file/);

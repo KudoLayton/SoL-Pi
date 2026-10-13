@@ -2,15 +2,17 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  */
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { homedir } from "node:os";
-import { normalizeWindowsShellPath, resolveToolPath } from "../src/sol-pi/extensions/action-fusion/file-queue.ts";
+import { normalizeWindowsShellPath, resolveToolPath, withFusedFileQueue } from "../src/sol-pi/extensions/action-fusion/file-queue.ts";
 import { createActionFusionExtension, type ActionFusionOptions } from "../src/sol-pi/extensions/action-fusion/index.ts";
+
+import type { ToolExecutionContext } from "../src/sol-pi/tool-context.ts";
 
 const tempDirs: string[] = [];
 
@@ -42,7 +44,7 @@ function withPlatform(platform: NodeJS.Platform, run: () => void): void {
 	}
 }
 
-function context(cwd: string): ExtensionContext {
+function context(cwd: string): ToolExecutionContext {
 	return {
 		cwd,
 		mode: "json",
@@ -50,10 +52,39 @@ function context(cwd: string): ExtensionContext {
 		model: undefined,
 		sessionManager: { getSessionId: () => "action-fusion-paths", getSessionFile: () => undefined },
 		ui: {},
-	} as ExtensionContext;
+	} as ToolExecutionContext;
 }
 
 describe("Action Fusion file URL paths", () => {
+	it.skipIf(process.platform !== "win32")("serializes existing case aliases without lowercasing paths", async () => {
+		const cwd = await createTempDir();
+		const target = join(cwd, "MixedCase.txt");
+		await writeFile(target, "original");
+		let release!: () => void;
+		let started!: () => void;
+		const entered = new Promise<void>((resolve) => { started = resolve; });
+		const gate = new Promise<void>((resolve) => { release = resolve; });
+		const events: string[] = [];
+		const first = withFusedFileQueue(target, async () => { events.push("first"); started(); await gate; });
+		await entered;
+		const second = withFusedFileQueue(join(cwd, "mixedcase.TXT"), async () => { events.push("second"); });
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			expect(events).toEqual(["first"]);
+		} finally { release(); await Promise.all([first, second]); }
+		expect(events).toEqual(["first", "second"]);
+	});
+
+	it("supports a long local path for the mutation and guard", async () => {
+		const cwd = await createTempDir();
+		const folder = join(cwd, ...Array.from({ length: 8 }, (_, i) => `directory-${i}-${"x".repeat(24)}`));
+		await mkdir(folder, { recursive: true });
+		const path = join(folder, "한글.txt");
+		const tool = loadTools({ bashOptions: { operations: { exec: async () => ({ exitCode: 0 }) } } }).get("write")!;
+		await tool.execute("long", { path, content: "long path", then_run: { command: "check" } }, undefined, undefined, context(cwd));
+		expect(await readFile(path, "utf8")).toBe("long path");
+	});
+
 	it.each(["target.txt", "space and #hash %.txt"])("resolves a file URL and @file URL for %s", (name) => {
 		const cwd = join(tmpdir(), "action-fusion-cwd");
 		const target = resolve(tmpdir(), name);
