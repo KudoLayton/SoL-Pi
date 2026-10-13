@@ -44,6 +44,56 @@ async function scenario(error?: Error, unrelatedCompactionAfterError = false) {
 }
 
 describe("Online Context Compact recovery", () => {
+	it.each(["session_start", "session_tree", "session_shutdown", "input"])("invalidates delayed callbacks and releases settlement on %s", async (lifecycle) => {
+		const { pi, ctx, boundary, compact, manager } = await scenario();
+		let pending: CompactOptions | undefined;
+		compact.mockImplementation((options = {}) => { pending = options; });
+		await boundary("first");
+		const settled = pi.emit("agent_settled", {}, ctx);
+		await Promise.resolve();
+		expect(pending).toBeDefined();
+		await pi.emit(lifecycle, lifecycle === "input" ? { text: "new request", streamingBehavior: "steer" } : {}, ctx);
+		await settled;
+		const before = manager.entries.length;
+		const entry = { type: "compaction" as const, id: "stale", parentId: null, timestamp: new Date().toISOString(), summary: "stale", firstKeptEntryId: "stale", tokensBefore: 100 };
+		pending!.onComplete?.(entry);
+		pending!.onError?.(new Error("late failure"));
+		expect(pi.sentMessages).toHaveLength(0);
+		expect(manager.entries).toHaveLength(before);
+	});
+
+	it("does not compact a stale selected boundary after superseding input", async () => {
+		const { pi, ctx, boundary, compact } = await scenario();
+		await boundary("first");
+		await pi.emit("input", { text: "different request", streamingBehavior: "followUp" }, ctx);
+		await pi.emit("agent_settled", {}, ctx);
+		expect(compact).not.toHaveBeenCalled(); expect(pi.sentMessages).toHaveLength(0);
+	});
+
+	it("releases settlement on cancellation without waiting for a late callback", async () => {
+		const { pi, ctx, boundary, compact } = await scenario();
+		const controller = new AbortController(); Object.assign(ctx, { signal: controller.signal });
+		let pending: CompactOptions | undefined;
+		compact.mockImplementation((options = {}) => { pending = options; });
+		await boundary("first"); const settled = pi.emit("agent_settled", {}, ctx);
+		await Promise.resolve(); controller.abort(); await settled;
+		pending?.onError?.(new Error("Compaction cancelled"));
+		expect(pi.sentMessages).toHaveLength(0);
+	});
+
+	it("ignores duplicate completion and concurrent settlement", async () => {
+		const { pi, ctx, boundary, compact } = await scenario();
+		let pending: CompactOptions | undefined;
+		compact.mockImplementation((options = {}) => { pending = options; });
+		await boundary("first"); const settled = pi.emit("agent_settled", {}, ctx);
+		await Promise.resolve(); await pi.emit("agent_settled", {}, ctx);
+		expect(compact).toHaveBeenCalledOnce();
+		const entry = { type: "compaction" as const, id: "done", parentId: null, timestamp: new Date().toISOString(), summary: "memo", firstKeptEntryId: "entry", tokensBefore: 100 };
+		pending!.onComplete?.(entry); pending!.onComplete?.(entry); pending!.onError?.(new Error("duplicate"));
+		await settled;
+		expect(pi.sentMessages).toHaveLength(1);
+	});
+
 	it("returns to deferred hosts after sending the continuation instead of throwing or deadlocking", async () => {
 		const { pi, manager, ctx, boundary, compact } = await scenario();
 		await boundary("first");
@@ -84,6 +134,34 @@ describe("Online Context Compact recovery", () => {
 		const { pi, ctx, boundary } = await scenario(error);
 		await boundary("first");
 		await expect(pi.emit("agent_settled", {}, ctx)).resolves.toBeUndefined();
+		expect(pi.sentMessages).toHaveLength(0);
+	});
+
+	it.each([true, false])("uses the owned compaction signal for wrapped errors (aborted=%s)", async (aborted) => {
+		const { pi, ctx, boundary, compact } = await scenario();
+		const controller = new AbortController();
+		const error = new Error("Turn prefix summarization failed: This operation was aborted");
+		compact.mockImplementation((options = {}) => {
+			void pi.emit("session_before_compact", { customInstructions: options.customInstructions, signal: controller.signal }, ctx).then(() => {
+				if (aborted) controller.abort();
+				options.onError?.(error);
+			});
+		});
+		await boundary("first");
+		const settled = pi.emit("agent_settled", {}, ctx);
+		if (aborted) await expect(settled).resolves.toBeUndefined();
+		else await expect(settled).rejects.toBe(error);
+		expect(pi.sentMessages).toHaveLength(0);
+	});
+
+	it("does not adopt an unrelated compaction's aborted signal", async () => {
+		const { pi, ctx, boundary, compact } = await scenario();
+		const error = new Error("summarizer unavailable");
+		compact.mockImplementation((options = {}) => {
+			void pi.emit("session_before_compact", { customInstructions: "manual summary", signal: AbortSignal.abort() }, ctx).then(() => options.onError?.(error));
+		});
+		await boundary("first");
+		await expect(pi.emit("agent_settled", {}, ctx)).rejects.toBe(error);
 		expect(pi.sentMessages).toHaveLength(0);
 	});
 

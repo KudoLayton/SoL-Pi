@@ -85,6 +85,7 @@ describe("SoL-Pi entrypoint", () => {
 			"before_provider_request",
 			"context",
 			"input",
+			"session_before_compact",
 			"session_before_tree",
 			"session_compact",
 			"session_shutdown",

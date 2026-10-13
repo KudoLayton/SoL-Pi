@@ -196,6 +196,11 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 		let nextContinuation: PendingContinuation | undefined;
 		let compactionInFlight = false;
 		let compactionRefused = false;
+		let generation = 0;
+		let closed = false;
+		let sessionId: string | undefined;
+		let activeAttempt: { signal?: AbortSignal } | undefined;
+		let finishAttempt: (() => void) | undefined;
 
 		const releaseContinuation = (): void => {
 			const continuation = nextContinuation;
@@ -206,8 +211,21 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			if (continuation) setTimeout(continuation.resolve, 0);
 		};
 
-		const restore = (context: ExtensionContext): void => {
+		const invalidateAttempt = (): void => {
+			generation++;
+			pendingBoundary = undefined;
+			selected = undefined;
+			activeAttempt = undefined;
+			finishAttempt?.();
+			finishAttempt = undefined;
+			compactionInFlight = false;
+			activeDebt = undefined;
 			releaseContinuation();
+		};
+		const restore = (context: ExtensionContext): void => {
+			invalidateAttempt();
+			closed = false;
+			sessionId = context.sessionManager.getSessionId();
 			state = restoreOnlineState(context.sessionManager.getBranch());
 			restored = true;
 			// Restoring raw history is not evidence of a provider-visible projection.
@@ -219,7 +237,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			compactionRefused = false;
 		};
 		const ensureRestored = (context: ExtensionContext): void => {
-			if (!restored) restore(context);
+			if (!restored || sessionId !== context.sessionManager.getSessionId()) restore(context);
 		};
 		const save = (): void => appendOnlineState(pi, state);
 		const contextTokens = (context: ExtensionContext): number => {
@@ -260,6 +278,16 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 		});
 
 		pi.on("session_start", (_event, context) => restore(context));
+		pi.on("session_before_compact", (event, context) => {
+			if (compactionInFlight && activeAttempt && !activeAttempt.signal &&
+				sessionId === context.sessionManager.getSessionId() &&
+				event.customInstructions === BOUNDARY_COMPACTION_INSTRUCTIONS) {
+				// This signal belongs to native compaction, not the boundary's
+				// deliberately aborted agent turn. Pi may wrap its AbortError in
+				// a plain summarization Error and lose the cancellation name.
+				activeAttempt.signal = event.signal;
+			}
+		});
 		pi.on("session_before_tree", () => (compactionInFlight ? { cancel: true } : undefined));
 		pi.on("session_tree", (_event, context) => restore(context));
 
@@ -275,6 +303,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 		});
 
 		pi.on("input", (event, context) => {
+			if (compactionInFlight || nextContinuation || selected || pendingBoundary) invalidateAttempt();
 			compactionRefused = false;
 			ensureRestored(context);
 			if (event.streamingBehavior !== "steer" && !event.text.startsWith("CORRECTION:")) {
@@ -358,6 +387,8 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 		});
 
 		pi.on("agent_settled", async (_event, context) => {
+			if (compactionInFlight) return;
+			if (sessionId !== context.sessionManager.getSessionId()) return;
 			// sendMessage() starts a turn without returning its promise. Capture the
 			// child settlement so print/JSON mode cannot dispose while it is running.
 			const parentContinuation = nextContinuation;
@@ -378,8 +409,13 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 				debtTokens: pending.decision.postCompactionTokens * (pending.decision.incrementalCacheCostRatio ?? 0),
 				repaymentTokens: Math.max(0, pending.decision.archiveTokens - pending.decision.memoTokens),
 			};
+			const owner = generation;
+			const attempt: { signal?: AbortSignal } = {};
+			activeAttempt = attempt;
+			const isCurrent = () => generation === owner && activeAttempt === attempt && sessionId === context.sessionManager.getSessionId();
 			let compacted = false;
 			let compactionError: Error | undefined;
+			let removeAbortListener = () => {};
 			try {
 				compactionInFlight = true;
 				await new Promise<void>((resolve) => {
@@ -389,9 +425,19 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 						finished = true;
 						resolve();
 					};
+					finishAttempt = finish;
+					// The boundary deliberately aborts its model turn. Only attach to a
+					// still-live settlement signal; native compact reports its own abort.
+					const settlementSignal = context.signal;
+					if (settlementSignal && !settlementSignal.aborted) {
+						const abort = () => { if (isCurrent()) invalidateAttempt(); };
+						settlementSignal.addEventListener("abort", abort, { once: true });
+						removeAbortListener = () => settlementSignal.removeEventListener("abort", abort);
+					}
 					context.compact({
 						customInstructions: BOUNDARY_COMPACTION_INSTRUCTIONS,
 						onComplete: (compaction) => {
+							if (finished || !isCurrent() || attempt.signal?.aborted) { finish(); return; }
 							try {
 								compacted = true;
 								const removed = Math.max(
@@ -410,12 +456,14 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 							}
 						},
 						onError: (error) => {
+							if (finished || !isCurrent()) { finish(); return; }
 							activeDebt = undefined;
 							compactionError = error;
 							finish();
 						},
 					});
 				});
+				if (!isCurrent() || attempt.signal?.aborted) return;
 				compactionInFlight = false;
 				const recoverableError = compactionError !== undefined && RECOVERABLE_COMPACTION_ERRORS.has(compactionError.message);
 				if (
@@ -466,13 +514,19 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 					}
 				}
 			} finally {
-				compactionInFlight = false;
-				activeDebt = undefined;
+				removeAbortListener();
+				if (isCurrent()) {
+					compactionInFlight = false;
+					activeDebt = undefined;
+					activeAttempt = undefined;
+					finishAttempt = undefined;
+				}
 				releaseParentContinuation(parentContinuation);
 			}
 		});
 
 		pi.on("session_compact", (event, context) => {
+			if (closed || (sessionId !== undefined && sessionId !== context.sessionManager.getSessionId())) return;
 			ensureRestored(context);
 			compactionRefused = false;
 			state = recordCompaction(
@@ -487,7 +541,10 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 		});
 
 		pi.on("session_shutdown", () => {
-			releaseContinuation();
+			closed = true;
+			invalidateAttempt();
+			restored = false;
+			sessionId = undefined;
 			pendingBoundary = undefined;
 			selected = undefined;
 			activeDebt = undefined;
