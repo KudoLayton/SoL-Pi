@@ -18,7 +18,9 @@ Online Context Compact is off by default. When enabled, every `update_plan` call
 
 The extension creates no sidecar, attestation, payload-capture, or research-instrumentation files. State entries do not enter the model context; only the generic post-compaction reminder does. Deleting the Pi session removes both kinds of persisted Online Context Compact data.
 
-Evidence-Preserving Reducer may temporarily read an overlong bash result from outside its session archive. It accepts only a regular, non-symlink `pi-bash-*.log` file directly inside the operating system's temporary directory and copies eligible content into the session-specific archive before any nested model call.
+Evidence-Preserving Reducer may read an overlong shell result outside its session archive. Pi-produced `pi-bash-*.log` / `pi-powershell-*.log` files must be regular files directly in the OS temporary directory, with no symbolic-link or junction ancestors. ActionFusion PowerShell logs require a matching in-process session/call reference, byte count, and hash; copied result text or metadata alone does not authorize reading them. Reads are bounded and use a single inspected handle. Incomplete or unverifiable sources are not sent for reduction. Eligible sources are copied into the session-specific archive before any nested model call. These are defenses within a trusted user-owned storage root, not an atomic sandbox against every concurrent filesystem attack.
+
+The live compatibility harness is opt-in and separate from extension runtime. It uses synthetic inputs, a read-only credential adapter, explicit model selection and strict dispatch limits. Its limits do not establish a currency spending cap. The selected live-test model does not become the default reducer or compaction model.
 
 ## Reporting a vulnerability
 

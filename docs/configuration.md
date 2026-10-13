@@ -57,6 +57,10 @@ The release entry supplies the run label and session-derived storage. It uses on
 
 - **Reducer provider/model** — from `evidencePreservingReducerProvider` and `evidencePreservingReducerModel` in the effective `sol-pi.json`. If omitted, SoL-Pi uses its built-in reducer route. SoL-Pi resolves that model through Pi's model registry and still relies on Pi-managed authentication; do not put credentials in `sol-pi.json`.
 
+### Model selection is unchanged
+
+The Windows compatibility work does not pin a production reducer model. EPR continues to use the configured provider/model or its original built-in defaults. OCC continues to use Pi's compaction model routing and any loaded compaction extension. The explicit provider/model and strict request limits of `scripts/check-epr-occ-live.mjs` belong only to that opt-in test process; they do not change `sol-pi.json`, runtime defaults, or subsequent sessions.
+
 ## Online Context Compact runtime inputs
 
 The release entry uses two runtime inputs:
@@ -64,7 +68,7 @@ The release entry uses two runtime inputs:
 - **Context window** — from `ExtensionContext.getContextUsage()`, used for window-pressure protection.
 - **Cache write/read ratio** — from `cacheWriteReadRatio` in the effective `sol-pi.json`. The value remains fixed for the session and is not recomputed when the model changes. It drives one runtime decision and is not a cost report.
 
-The configured ratio stays fixed for the loaded extension. The mechanism stores its current plan, progress summaries, request horizon, context growth, and compaction debt as versioned custom entries in Pi's session log. After a successful compaction it sends one hidden, generic message with `triggerTurn: true`, which starts a new turn and asks the assistant to continue the current plan, preserving existing step IDs when updating progress. A settlement barrier keeps print and JSON modes in the same Pi invocation until that continuation settles, so callers do not need to resume the session or inject `Continue working`. Cancelling or exiting does not schedule an automatic continuation. The mechanism creates no separate Online Context Compact files. The programmatic factory exposes only a matching retained-tail value for installations whose Pi compaction setting differs from the default.
+The configured ratio stays fixed for the loaded extension. The mechanism stores its current plan, progress summaries, request horizon, context growth, and compaction debt as versioned custom entries in Pi's session log. After a successful compaction it sends one hidden, generic message with `triggerTurn: true`, which starts a new turn and asks the assistant to continue the current plan, preserving existing step IDs when updating progress. A settlement barrier keeps print and JSON modes in the same Pi invocation until that continuation settles, so callers do not need to resume the session or inject `Continue working`. Cancelling or exiting does not schedule an automatic continuation. The mechanism creates no separate Online Context Compact files. Pending compaction callbacks are tied to their session generation and attempt. Session changes, shutdown, cancellation, and superseding input invalidate pending continuation; duplicate callbacks cannot schedule another continuation. The programmatic factory exposes only a matching retained-tail value for installations whose Pi compaction setting differs from the default.
 
 ## Pi integration
 
@@ -80,7 +84,7 @@ The executable and timeout are checked before mutation. A supplied timeout must 
 
 Cancellation and timeout request process-tree termination (`taskkill /T /F` on Windows, process-group termination on POSIX). Cleanup failures are reported. Detached processes and forced termination of Pi itself are not guaranteed to be cleaned up.
 
-Output is decoded as UTF-8. The returned tail is limited to 2,000 lines / 50 KiB, with a full-log path on truncation or failure. Separate stdout/stderr arrival order is not a guarantee of their original emission order. Command scripts are deleted on completion; output logs remain under a unique `sol-pi-pwsh-*` directory in the OS temporary directory until host/caller cleanup. Use a trusted user-owned temporary directory: POSIX mode bits do not guarantee Windows ACL isolation. ObservationPack can archive the returned tool result, but full PowerShell-log reduction by EPR is outside this profile's support guarantee.
+Output is decoded as UTF-8. The returned tail is limited to 2,000 lines / 50 KiB, with a full-log path on truncation or failure. Separate stdout/stderr arrival order is not a guarantee of their original emission order. Command scripts are deleted on completion; output logs remain under a unique `sol-pi-pwsh-*` directory in the OS temporary directory until host/caller cleanup. Use a trusted user-owned temporary directory: POSIX mode bits do not guarantee Windows ACL isolation. ObservationPack can archive the returned tool result, but EPR can consume verified full PowerShell logs when explicitly enabled; see [Windows validation scope](compatibility.md#eprocc-windows-validation-scope). Unverifiable or incomplete sources are not reduced.
 
 ## Trust
 

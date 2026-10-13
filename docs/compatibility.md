@@ -33,7 +33,7 @@ Stored-object reuse and recall reject symbolic links, including Windows director
 
 Run `npm ci --ignore-scripts`, `npm run check`, and `node scripts/check-pi-compat.mjs` from PowerShell. Package tests launch the npm CLI through Node when `npm_execpath` is available, with a PowerShell fallback on Windows, and accept both npm 11 array and npm 12 object pack reports. POSIX `0600` assertions remain POSIX-only: Node mode bits do not prove Windows ACL isolation. Regular-file and archive integrity checks run on both platforms.
 
-The conservative Windows installation enables ActionFusion and ObservationPack only; it is separate from the managed all-enabled profile in `agents-install.md`. Keep EPR and OCC disabled until their additional usage and continuation behavior has been validated with the installed extension set. ActionFusion defaults to Pi's Bash launcher. Set `actionFusionShell: "powershell"` to run PowerShell 7 directly, with no Bash dependency or fallback. `then_run.command` must use the selected shell's syntax. A failed follow-up command does not undo the preceding file change.
+The conservative Windows installation enables ActionFusion and ObservationPack only; it is separate from the managed all-enabled profile in `agents-install.md`. EPR and OCC remain opt-in. Their PowerShell and continuation paths now have the additional validation described below; this does not validate every installed extension combination or automatically enable either feature. ActionFusion defaults to Pi's Bash launcher. Set `actionFusionShell: "powershell"` to run PowerShell 7 directly, with no Bash dependency or fallback. `then_run.command` must use the selected shell's syntax. A failed follow-up command does not undo the preceding file change.
 
 The Windows regression suite covers existing-file case aliases, file URLs, long local paths, Unicode/quoted paths, BOM/CRLF recall, junction rejection, failed-read handle cleanup, native command failures, output truncation, cancellation, and child-process termination. UNC/network-share behavior requires an actual share and is not claimed from local-path tests. Case-alias queue tests cover existing files; creating distinct case spellings of a previously nonexistent file concurrently is not an atomic filesystem lock guarantee.
 
@@ -49,9 +49,55 @@ These npm overrides apply to this checkout as an installation root and to its is
 
 Do not register this checkout alongside another SoL-Pi package that also replaces `edit`/`write`. Review other context compaction extensions independently; this Windows profile keeps OCC off and does not alter those extensions.
 
+## EPR/OCC Windows validation scope
+
+The expanded suite covers native ActionFusion PowerShell and Pi's independent `powershell` tool, safe full-log recovery, archive integrity, structured results, and the PowerShell → EPR → ObservationPack → OCC sequence. Independent-tool integration is conditional on the public PowerShell factory being present; Pi 0.84.2 does not provide it. The source matrix installs `@narumitw/pi-codex-compact@0.56.0` only into the isolated Pi 1.2.0 test copy, not into the checkout or runtime dependencies. Its unmodified distribution is tested in both load orders for success, rejection, provider failure/native fallback, and cancellation using offline transport fixtures.
+
+The expanded Windows matrix passed type checking, package inspection, public API checks, and audit (zero reported vulnerabilities) with these results:
+
+| Pi | Passed tests | Skipped tests |
+| --- | ---: | ---: |
+| 0.84.2 | 260 | 10: eight Pi-1.2-only coexistence cases, one unavailable independent PowerShell case, one POSIX-only case |
+| 0.85.1 | 261 | 9: eight Pi-1.2-only coexistence cases and one POSIX-only case |
+| 1.2.0 | 269 | 1: POSIX-only case |
+
+OCC CLI tests cover print/text and JSON mode settlement and cancellation. Unit/SDK tests cover duplicate settlement, late callbacks after session start/tree/shutdown/new input, cancellation, and single continuation. Manual interactive-TUI cancellation and a real `/responses/compact` endpoint remain unverified. No automatic deployment or user-level activation is performed.
+
+A separate opt-in live harness, `scripts/check-epr-occ-live.mjs`, runs only from a full source copy with Pi 1.2.0 dependencies. It accepts an explicitly selected provider/model. The Windows validation used `openai / gpt-6-astra` **only for that test**; production EPR still uses the configured reducer route (or its original defaults), and OCC still delegates model selection to Pi and the loaded compaction implementation.
+
+Four synthetic-data requests succeeded: fused EPR (10,819 request-body bytes), independent PowerShell EPR (10,819), Pi-native compaction (18,145), and its continuation (9,898). Every dispatch required `max_output_tokens <= 2048`; all returned HTTP 200. The harness used locally generated plan turns and injected context pressure to test the OCC boundary without additional model calls. Its initial local boundary setup failed without dispatching an OCC request; the successful EPR calls were not repeated when continuing with the remaining allowance. Only continuation usage was retained in that historical report; it is not a complete cost report. The harness now captures terminal provider usage for each live phase.
+
+### Installed-extension offline check
+
+`scripts/check-installed-extensions.mjs --host-agent-dir <existing-agent-directory>` adds an opt-in, machine-local check from a full source copy with Pi 1.2.0 dependencies. It resolves the existing local npm/Git package entries without installing/updating them and replaces exactly one installed SoL-Pi with the source copy. Each case runs in a fresh temporary process/workspace/agent directory. User settings are not edited; credentials are not read or copied. Model responses (including automatic-review decisions and native summaries) are synthetic. Node network calls are rejected before extension imports. This is not an OS sandbox and does not test external-tool network isolation.
+
+The checked combination was pi-web-access 0.39.0, pi-btw 0.8.0, rpiv-todo 2.9.0, rpiv-ask-user-question 2.13.8, pi-plan-mode 0.1.2, pi-goal 0.54.4, pi-auto-review 0.1.2, pi-codex-compact 0.56.0, pi-rg 0.1.0, pi-everything 0.1.0, pi-exit 0.1.0, and the modified SoL-Pi. It tests installed and reversed load order, the conservative profile, fused/independent PowerShell EPR with OCC, and cancellation followed by another prompt. A SoL-Pi-only pair controls for other extensions.
+
+**After the cancellation fix: 12 passed / 0 failed.** All twelve cases loaded without extension-load errors or duplicate tool names, and made zero network attempts. Normal EPR/compaction/continuation and all five cancellation cases passed. Cancelled compactions leave the session idle, write no compaction/automatic continuation, and accept a subsequent prompt without an extension error.
+
+The initial run had five failures reporting `Turn prefix summarization failed: This operation was aborted`, including the SoL-Pi-only control. Pi can wrap native cancellation in a plain summarization error. OCC now captures the native `session_before_compact` signal for its own active attempt and treats an aborted signal as cancellation, without relying on that error text. Identical text without an aborted owned signal still reports an error; unrelated compaction signals are not adopted. No upstream Pi changes are required.
+
+The regular suite now contains 270 tests, including native split-turn cancellation through the real SDK and unit checks for owned/non-aborted/unrelated signals. The expanded harness still requires zero extension errors and exits nonzero on failures; cancellation is not an expected-failure exemption. It checks settings content and authentication-file metadata for changes. It does not cover active Plan/Goal/BTW workflows, interactive TUI, web/search execution, project-local extensions, skills, MCP, real reviewer decisions, or remote compact transport.
+
+### Running limited live validation
+
+First run the offline matrix, then use its printed Pi 1.2.0 copy. Keep `PI_CODING_AGENT_DIR` pointing at the intended existing Pi agent directory for read-only model/credential discovery when launching:
+
+```powershell
+node scripts/check-epr-occ-live.mjs --allow-live --provider <provider> --model <model>
+```
+
+This is not part of `npm run check`. It uses an isolated working/agent directory, synthetic logs and conversation only, a read-only credential adapter, and a guarded provider transport. It does not modify user settings or authentication files, refresh credentials, or switch models on failure. The supported live transport is `openai-responses`; unavailable models, credentials requiring refresh, unsupported output caps, and other endpoints stop the test. `/responses/compact` is explicitly denied because its output-token cap cannot be guaranteed.
+
+Limits: four dispatches total (one per phase), 64 KiB serialized request body, 2,048 output tokens, 90 seconds per request, six minutes of test execution. Retries/fallback dispatches cannot reuse a phase. A durable request ledger reserves each attempt before transmission; redirects and unarmed requests are rejected. An explicit `--resume-report <path>` is accepted only after both EPR phases succeeded and the subsequent local-plan setup failed without a native request; the original allowance is carried forward, not reset. A ledger with a dispatched native request is not resumable. The recorded token/request limits are not a monetary cap. Logs contain phase/status/count/size/hash/usage metadata, never request bodies or credentials. Synthetic archives and test artifacts remain in the printed temporary directory for inspection and caller cleanup.
+
 ## Evidence-Preserving Reducer
 
-The reducer handles public `tool_result` events and resolves the configured reducer provider/model through Pi's model registry before calling `ExtensionContext.modelRegistry.complete()` when available. For the Pi 0.81.1 fork, which exposes no registry `complete()` method, it resolves authentication for that reducer model through `getApiKeyAndHeaders()` and calls the shared `@earendil-works/pi-ai/compat` completion API. The reducer preserves the original result whenever the configured reducer model is unavailable or eligibility, model-call, schema, source-hash, exact-quote, size, or likely-secret checks fail.
+The reducer handles public `tool_result` events and resolves the configured reducer provider/model through Pi's model registry before calling `ExtensionContext.modelRegistry.complete()` when available. For the Pi 0.81.1 fork, which exposes no registry `complete()` method, it resolves authentication for that reducer model through `getApiKeyAndHeaders()` and calls the shared `@earendil-works/pi-ai/compat` completion API. The reducer preserves the original result whenever the configured reducer model is unavailable or eligibility, source access, archive creation, model-call, schema, source-hash, exact-quote, size, or likely-secret checks fail. Diagnostic logging failure cannot change the tool result. Cancellation and timeout release the reducer even if a provider ignores its signal; late or previous-session results are discarded.
+
+PowerShell diagnostic recognition includes `npm.cmd test`, `dotnet build/test`, and MSBuild, including quoted executable paths. Unknown commands are not universally delegated. Pi shell logs require a tool-specific filename and trusted temporary-directory location; native PowerShell paths come from result metadata, not arbitrary output text. The legacy Bash text-path fallback retains the same location/link checks. ActionFusion uses a versioned, per-session/per-call artifact reference with byte count and hash, including for failures on older Pi versions; its pending registry is capped at 256 calls per session. A truncated result without a verified complete source is left unchanged rather than reducing a partial preview.
+
+EPR archives and ObservationPack share regular-file/ancestor checks, same-handle bounded reads, and identity/integrity validation. Windows junctions and symbolic links are rejected; private Windows ACLs and complete atomic filesystem-race protection are not implied. Known Pi shell structured results retain exit status and full-log references while updating `output` alongside text. Unknown structured shell schemas are left untouched.
 
 All persistent paths use `SessionManager.getSessionDir()` and `getSessionId()`, which are present in both the fork and Pi 0.85.1. If the session directory is empty (`--no-session` or `SessionManager.inMemory()`), SoL-Pi lazily creates a private `sol-pi-<session-id>-<random>/` directory under `os.tmpdir()`. Its path is reused by session ID across contexts and both archiving mechanisms while the extension is loaded. These files remain available after worker shutdown for callers that need to read evidence; cleanup is left to the host or caller. SoL-Pi creates no configurable storage-path surface.
 
