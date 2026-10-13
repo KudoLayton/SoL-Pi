@@ -29,6 +29,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { resolveToolPath } from "./file-queue.ts";
+import { clearArtifacts } from "./artifacts.ts";
 import { renderSolPiTool, showSolPiSavings } from "../../tui.ts";
 import {
 	createThenRunSchema,
@@ -76,6 +77,12 @@ export function createActionFusionExtension(options: ActionFusionOptions = {}): 
 	const baseWrite = memoizeByCwd((cwd: string) => createWriteToolDefinition(cwd, options.writeOptions));
 
 	return (pi: ExtensionAPI) => {
+		let sessionId: string | undefined;
+		const clear = () => { if (sessionId) clearArtifacts(sessionId); sessionId = undefined; };
+		const track = (id: string | undefined) => { if (id !== sessionId) { clear(); sessionId = id; } };
+		pi.on?.("session_start", (_event, ctx) => { clear(); sessionId = ctx.sessionManager.getSessionId(); });
+		pi.on?.("session_tree", clear);
+		pi.on?.("session_shutdown", clear);
 		const editTemplate = baseEdit(process.cwd());
 		const writeTemplate = baseWrite(process.cwd());
 
@@ -93,6 +100,7 @@ export function createActionFusionExtension(options: ActionFusionOptions = {}): 
 			parameters: editParameters,
 			async execute(toolCallId, input, signal, onUpdate, ctx) {
 				const { then_run, ...editInput } = input as typeof input & { then_run?: ThenRunInput };
+				track(ctx.sessionManager?.getSessionId());
 				const result = await executeMutationThenRun({
 					toolCallId,
 					absolutePath: resolveToolPath(ctx.cwd, input.path),
@@ -128,6 +136,7 @@ export function createActionFusionExtension(options: ActionFusionOptions = {}): 
 			parameters: writeParameters,
 			async execute(toolCallId, input, signal, onUpdate, ctx) {
 				const { then_run, ...writeInput } = input as typeof input & { then_run?: ThenRunInput };
+				track(ctx.sessionManager?.getSessionId());
 				const result = await executeMutationThenRun({
 					toolCallId,
 					absolutePath: resolveToolPath(ctx.cwd, input.path),

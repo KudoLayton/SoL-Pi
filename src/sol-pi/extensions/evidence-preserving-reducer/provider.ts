@@ -92,6 +92,18 @@ function operationSignal(parent: AbortSignal | undefined, timeoutMs: number): {
 	};
 }
 
+function abortable<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const abort = () => reject(signal.reason ?? new DOMException("Reducer operation aborted", "AbortError"));
+		if (signal.aborted) { abort(); return; }
+		signal.addEventListener("abort", abort, { once: true });
+		Promise.resolve().then(() => { signal.throwIfAborted(); return work(); }).then(
+			(value) => { signal.removeEventListener("abort", abort); resolve(value); },
+			(error) => { signal.removeEventListener("abort", abort); reject(error); },
+		);
+	});
+}
+
 function resolveReducerModel(config: ReducerConfig, registry: CompatibleModelRegistry): Model<Api> {
 	const model = registry.find?.(config.reducerProvider, config.reducerModel);
 	if (!model) {
@@ -133,21 +145,20 @@ export async function callReducer(
 			signal: operation.signal,
 			timeoutMs: config.timeoutMs,
 		};
-		let response: AssistantMessage;
-		if (typeof registry.complete === "function") {
-			response = await registry.complete(model, requestContext, requestOptions);
-		} else {
+		const response = await abortable(operation.signal, async () => {
+			if (typeof registry.complete === "function") return registry.complete(model, requestContext, requestOptions);
 			const auth = await registry.getApiKeyAndHeaders(model);
+			operation.signal.throwIfAborted();
 			if (!auth.ok) throw new Error(auth.error);
 			const legacyModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
 			const headers = stringHeaders(auth.headers);
-			response = await compatComplete(legacyModel, requestContext, {
+			return compatComplete(legacyModel, requestContext, {
 				...requestOptions,
 				...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
 				...(headers === undefined ? {} : { headers }),
 				...(auth.env === undefined ? {} : { env: auth.env }),
 			});
-		}
+		});
 		return {
 			errorMessage: response.errorMessage,
 			model: response.model,

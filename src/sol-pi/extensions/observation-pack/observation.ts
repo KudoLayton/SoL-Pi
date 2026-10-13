@@ -3,9 +3,8 @@
  * SPDX-License-Identifier: MIT
  */
 import { createHash } from "node:crypto";
-import { constants, type BigIntStats } from "node:fs";
-import { type FileHandle, lstat, mkdir, open } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
+import { storeVerifiedFile, withStoredFile } from "../../safe-files.ts";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TextContent, ToolResultMessage } from "@earendil-works/pi-ai";
 
@@ -18,58 +17,6 @@ export const PLACEHOLDER_EXCERPT_BYTES = 1024;
 
 const CHARS_PER_TOKEN = 4;
 const OBSERVATION_ID_PATTERN = /^obs_[a-f0-9]{24}$/u;
-const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
-const READ_OBJECT_FLAGS = constants.O_RDONLY | NO_FOLLOW;
-const CREATE_OBJECT_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW;
-
-async function inspectParents(path: string): Promise<BigIntStats[]> {
-	const parents: BigIntStats[] = [];
-	let directory = dirname(resolve(path));
-	while (true) {
-		const stats = await lstat(directory, { bigint: true });
-		if (stats.isSymbolicLink()) {
-			throw Object.assign(new Error(`Observation parent is not a regular directory: ${directory}`), { code: "ELOOP" });
-		}
-		if (!stats.isDirectory()) throw new Error(`Observation parent is not a regular directory: ${directory}`);
-		parents.push(stats);
-		const parent = dirname(directory);
-		if (parent === directory) return parents;
-		directory = parent;
-	}
-}
-
-async function inspectFile(path: string): Promise<BigIntStats> {
-	const stats = await lstat(path, { bigint: true });
-	if (stats.isSymbolicLink()) {
-		throw Object.assign(new Error(`Observation is a symbolic link: ${path}`), { code: "ELOOP" });
-	}
-	if (!stats.isFile()) throw new Error(`Stored observation is not a regular file: ${path}`);
-	return stats;
-}
-
-function assertSameFile(before: BigIntStats, after: BigIntStats): void {
-	if (before.dev !== after.dev || before.ino !== after.ino) {
-		throw Object.assign(new Error("Stored observation path changed during access"), { code: "ESTALE" });
-	}
-}
-
-async function withStoredFile<T>(path: string, read: (handle: FileHandle) => Promise<T>): Promise<T> {
-	const parents = await inspectParents(path);
-	const before = await inspectFile(path);
-	const handle = await open(path, READ_OBJECT_FLAGS);
-	try {
-		const opened = await handle.stat({ bigint: true });
-		assertSameFile(before, opened);
-		assertSameFile(opened, await inspectFile(path));
-		const value = await read(handle);
-		assertSameFile(opened, await inspectFile(path));
-		const afterParents = await inspectParents(path);
-		parents.forEach((parent, index) => assertSameFile(parent, afterParents[index]!));
-		return value;
-	} finally {
-		await handle.close();
-	}
-}
 
 /**
  * Receipts from the evidence-preserving reducer are already a reduction of a
@@ -171,36 +118,11 @@ export function createObservation(message: ToolResultMessage, runtimeRoot: strin
  * verifying an existing object byte for byte before reusing it.
  */
 export async function ensureStored(observation: Observation): Promise<void> {
-	const directoryPath = dirname(observation.filePath);
-	await mkdir(directoryPath, { recursive: true, mode: 0o700 });
-	const directoryStats = await lstat(directoryPath);
-	if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink()) {
-		throw new Error(`Observation directory is not a regular directory for ${observation.id}`);
+	if (hash(observation.text) !== observation.contentHash || Buffer.byteLength(observation.text) !== observation.bytes) {
+		throw new Error("Observation integrity failure");
 	}
-	await inspectParents(observation.filePath);
-
-	let handle: FileHandle | undefined;
-	try {
-		handle = await open(observation.filePath, CREATE_OBJECT_FLAGS, 0o600);
-		await handle.writeFile(observation.text, { encoding: "utf8" });
-	} catch (error) {
-		if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
-		await withStoredFile(observation.filePath, async (existingHandle) => {
-			const existing = await existingHandle.stat();
-			if (!existing.isFile()) {
-				throw new Error(`Content-addressed observation is not a regular file for ${observation.id}`);
-			}
-			if (existing.size !== observation.bytes) {
-				throw new Error(`Content-addressed observation size mismatch for ${observation.id}`);
-			}
-			const existingContent = await existingHandle.readFile();
-			if (hash(existingContent) !== observation.contentHash) {
-				throw new Error(`Content-addressed observation hash mismatch for ${observation.id}`);
-			}
-		});
-	} finally {
-		await handle?.close();
-	}
+	try { await storeVerifiedFile(observation.filePath, observation.text); }
+	catch (error) { throw new Error(`Observation ${observation.id}: ${error instanceof Error ? error.message : "storage failure"}`, { cause: error }); }
 }
 
 function completeLineExcerpt(text: string, budgetBytes: number, fromEnd: boolean): string {

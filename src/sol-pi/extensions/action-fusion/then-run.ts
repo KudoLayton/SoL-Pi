@@ -9,6 +9,7 @@ import { type BashToolOptions, createBashToolDefinition } from "@earendil-works/
 import { Type } from "typebox";
 import { withFusedFileQueue } from "./file-queue.ts";
 import { checkPowerShell, runPowerShell } from "./powershell.ts";
+import { rememberArtifact, type CommandArtifact } from "./artifacts.ts";
 import type { ToolExecutionContext } from "../../tool-context.ts";
 
 export const THEN_RUN_SUCCEEDED = "[then_run:succeeded]";
@@ -118,11 +119,16 @@ export async function executeMutationThenRun<TDetails>({
 		}
 
 		await assertUnchangedBeforeCommand(absolutePath);
+		let artifact: CommandArtifact | undefined;
+		const artifactSession = ctx.sessionManager?.getSessionId();
 		try {
 			signal?.throwIfAborted();
 			let output: string;
 			if (shell === "powershell") {
-				output = await runPowerShell(thenRun, ctx.cwd, signal);
+				output = await runPowerShell(thenRun, ctx.cwd, signal, (record) => {
+					artifact = { ...record, toolCallId };
+					if (artifactSession && artifact.complete && !signal?.aborted && ctx.sessionManager?.getSessionId() === artifactSession) rememberArtifact(artifactSession, artifact);
+				});
 			} else {
 				const result = await createBashToolDefinition(ctx.cwd, bashOptions).execute(`${toolCallId}:then_run`, thenRun, signal, undefined, ctx);
 				output = resultText(result);
@@ -131,6 +137,7 @@ export async function executeMutationThenRun<TDetails>({
 			}
 			return {
 				...mutationResult,
+				...(artifact ? { details: { ...(mutationResult.details ?? {}), actionFusionArtifact: artifact } as TDetails } : {}),
 				content: [
 					...mutationResult.content,
 					{ type: "text", text: output ? `${THEN_RUN_SUCCEEDED}\n${output}` : THEN_RUN_SUCCEEDED },

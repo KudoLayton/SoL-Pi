@@ -12,6 +12,7 @@ import { SessionManager, type ExtensionContext, type ToolResultEvent } from "@ea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	createEvidencePreservingReducerExtension,
+	reduceToolResult,
 	DIAGNOSTIC_COMMAND,
 	loadReducerConfig,
 	REDUCER_RECEIPT_SCHEMA,
@@ -181,6 +182,40 @@ function load(
 }
 
 describe("evidence-preserving reducer", () => {
+	it.each(["abort", "session-tree", "shutdown"])("discards a delayed provider result after %s", async (mode) => {
+		const root = await storeRoot();
+		const body = "ERROR synthetic failure\n".repeat(300);
+		let release!: () => void; let started!: () => void;
+		const ready = new Promise<void>((resolve) => { started = resolve; });
+		const gate = new Promise<void>((resolve) => { release = resolve; });
+		const controller = new AbortController();
+		const complete = modelComplete(body, (input) => ({ schema: REDUCER_RECEIPT_SCHEMA, source_sha256: sourceHash(input), status: "failure", uncertain: false, evidence: [{ kind: "failure", quote: "ERROR synthetic failure" }] }));
+		const { pi, context } = load(root, async (...args) => { started(); await gate; return complete(...args); }, ACTIVE_MODEL, { signal: controller.signal });
+		const pending = pi.emit("tool_result", bashEvent(body), context);
+		await ready;
+		if (mode === "abort") controller.abort();
+		else await pi.emit(mode === "shutdown" ? "session_shutdown" : "session_tree", {}, context);
+		release();
+		expect(await pending).toBeUndefined();
+	});
+
+	it("times out even when a reducer ignores its AbortSignal", async () => {
+		const root = await storeRoot(); const body = "ERROR synthetic\n".repeat(500);
+		const { context } = load(root, () => new Promise(() => {}));
+		const archive = await archiveBody(root, body);
+		await expect(callReducer({ ...loadReducerConfig(root), timeoutMs: 10 }, "npm test", true, archive, body, context)).rejects.toMatchObject({ name: "AbortError" });
+	});
+
+	it("keeps the original result when archiving or diagnostics fail", async () => {
+		const root = await storeRoot(); const blocked = join(root, "blocked"); await writeFile(blocked, "not a directory");
+		const complete = vi.fn(async () => { throw new Error("must not send"); });
+		const { context } = load(root, complete);
+		const source = bashEvent("ERROR synthetic\n".repeat(500)); const before = structuredClone(source);
+		const journal = () => { throw new Error("journal unavailable"); };
+		await expect(reduceToolResult(journal, { ...loadReducerConfig(root), storeRoot: blocked }, source, context)).resolves.toBeUndefined();
+		expect(complete).not.toHaveBeenCalled(); expect(source).toEqual(before);
+	});
+
 	it("reduces and preserves evidence for an in-memory session", async () => {
 		const sessionManager = SessionManager.inMemory();
 		const signal = "ERROR in-memory worker failed";
@@ -545,7 +580,8 @@ describe("evidence-preserving reducer", () => {
 			bashEvent(inlineBody, { toolCallId: "call-2", details: { fullOutputPath: outsidePath } }),
 			context,
 		);
-		expect(input).toContain(inlineBody);
+		// An advertised but untrusted full log must not be replaced by a partial preview.
+		expect(input).toBe("");
 		expect(input).not.toContain("ERROR outside file");
 	});
 

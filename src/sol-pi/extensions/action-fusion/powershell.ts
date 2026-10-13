@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import type { CommandArtifact } from "./artifacts.ts";
 import { closeSync, openSync, writeSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,7 +26,7 @@ export async function checkPowerShell(input: ThenRunInput, signal?: AbortSignal)
 	}
 }
 
-export async function runPowerShell(input: ThenRunInput, cwd: string, signal?: AbortSignal): Promise<string> {
+export async function runPowerShell(input: ThenRunInput, cwd: string, signal?: AbortSignal, onArtifact?: (artifact: Omit<CommandArtifact, "toolCallId">) => void): Promise<string> {
 	signal?.throwIfAborted();
 	const directory = await mkdtemp(join(tmpdir(), "sol-pi-pwsh-"));
 	const script = join(directory, "command.ps1");
@@ -32,6 +34,10 @@ export async function runPowerShell(input: ThenRunInput, cwd: string, signal?: A
 	let fd: number | undefined;
 	let tail = "";
 	let truncated = false;
+	let complete = false;
+	let archiveFailed = false;
+	let bytesWritten = 0;
+	const digest = createHash("sha256");
 	const append = (text: string) => {
 		tail += text;
 		const lines = tail.split("\n");
@@ -90,8 +96,10 @@ export async function runPowerShell(input: ThenRunInput, cwd: string, signal?: A
 					const bytes = Buffer.from(text, "utf8");
 					let offset = 0;
 					while (offset < bytes.length) offset += writeSync(fd!, bytes, offset, bytes.length - offset);
+					digest.update(bytes);
+					bytesWritten += bytes.length;
 					append(text);
-				} catch (error) { stop(new Error(`Unable to archive PowerShell output: ${String(error)}`)); }
+				} catch (error) { archiveFailed = true; stop(new Error(`Unable to archive PowerShell output: ${String(error)}`)); }
 			};
 			for (const stream of [child.stdout, child.stderr]) {
 				const decoder = new StringDecoder("utf8");
@@ -107,12 +115,17 @@ export async function runPowerShell(input: ThenRunInput, cwd: string, signal?: A
 			});
 			if (signal?.aborted) abort();
 		});
+		complete = code !== null && !archiveFailed;
 		if (code !== 0) throw new Error(`PowerShell exited with code ${code}`);
 		return tail + (truncated ? `\n[Output truncated. Full output: ${log}]` : "");
 	} catch (error) {
 		throw new Error(`${error instanceof Error ? error.message : String(error)}\n${tail}\nFull output: ${log}`);
 	} finally {
-		try { if (fd !== undefined) closeSync(fd); }
-		finally { await rm(script, { force: true }); }
+		try {
+			if (fd !== undefined) {
+				closeSync(fd);
+				onArtifact?.({ version: 1, path: log, bytes: bytesWritten, sha256: digest.digest("hex"), complete });
+			}
+		} finally { await rm(script, { force: true }); }
 	}
 }

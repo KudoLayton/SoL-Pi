@@ -28,7 +28,7 @@ import type {
 import { runtimeRoot } from "../../runtime-paths.ts";
 import { formatSavingsBytes, showSolPiSavings } from "../../tui.ts";
 import { archiveBody, archiveRoot } from "./archive.ts";
-import { reducibleToolResult } from "./candidate.ts";
+import { reducibleToolResult, type StructuredResult } from "./candidate.ts";
 import {
 	DIAGNOSTIC_COMMAND,
 	isRecord,
@@ -47,6 +47,7 @@ export interface ReducedToolResult {
 	readonly content: ToolResultEvent["content"];
 	readonly details: Record<string, unknown>;
 	readonly isError: boolean;
+	readonly structuredContent?: StructuredResult;
 }
 
 export type EvidencePreservingReducerOptions = ReducerConfigOptions;
@@ -60,8 +61,20 @@ export async function reduceToolResult(
 	config: ReducerConfig,
 	event: ToolResultEvent,
 	context: ExtensionContext,
+	isCurrent: () => boolean = () => true,
 ): Promise<ReducedToolResult | undefined> {
-	const reducible = await reducibleToolResult(event);
+	const safeJournal: Journal = (kind, data) => { try { journal(kind, data); } catch { /* diagnostics must not affect tool results */ } };
+	try {
+		if (context.signal?.aborted || !isCurrent()) return undefined;
+		return await reduceCandidate(safeJournal, config, event, context, isCurrent);
+	} catch (error) {
+		safeJournal("fallback", { reason: "source-processing-failed", code: isRecord(error) && ["EACCES", "EPERM", "ENOENT", "ESTALE", "ELOOP", "ENOSPC"].includes(String(error.code)) ? error.code : "UNAVAILABLE" });
+		return undefined;
+	}
+}
+
+async function reduceCandidate(journal: Journal, config: ReducerConfig, event: ToolResultEvent, context: ExtensionContext, isCurrent: () => boolean): Promise<ReducedToolResult | undefined> {
+	const reducible = await reducibleToolResult(event, context.sessionManager.getSessionId(), config.maxChars);
 	if (!reducible || !DIAGNOSTIC_COMMAND.test(reducible.command)) return undefined;
 	const { body, command } = reducible;
 	if (Buffer.byteLength(body, "utf8") < config.minBytes) return undefined;
@@ -87,7 +100,9 @@ export async function reduceToolResult(
 
 	let provider: ProviderResult;
 	try {
+		if (context.signal?.aborted || !isCurrent()) return undefined;
 		provider = await callReducer(config, command, event.isError, archive, body, context);
+		if (context.signal?.aborted || !isCurrent()) return undefined;
 	} catch (error) {
 		const name = errorName(error);
 		journal("fallback", {
@@ -109,7 +124,6 @@ export async function reduceToolResult(
 		provider: provider.provider,
 		model: provider.model,
 		stopReason: provider.stopReason,
-		errorMessage: provider.errorMessage,
 		usage: provider.usage,
 	});
 	if (!provider.ok) {
@@ -118,7 +132,7 @@ export async function reduceToolResult(
 			sourceSha256: archive.hash,
 			reason: "model-response-error",
 			stopReason: provider.stopReason,
-			errorMessage: provider.errorMessage,
+
 		});
 		return undefined;
 	}
@@ -160,6 +174,7 @@ export async function reduceToolResult(
 	showSolPiSavings(context, "Luna Delegating", formatSavingsBytes(archive.bytes - receiptBytes));
 	return {
 		content: reducible.projectReceipt(receipt),
+		...(reducible.projectStructured ? { structuredContent: reducible.projectStructured(receipt) } : {}),
 		isError: event.isError,
 		details: {
 			...(isRecord(event.details) ? event.details : {}),
@@ -179,7 +194,17 @@ export async function reduceToolResult(
 export function createEvidencePreservingReducerExtension(options: EvidencePreservingReducerOptions = {}): ExtensionFactory {
 	return (pi: ExtensionAPI) => {
 		const states = new Map<string, { config: ReducerConfig; journal: Journal }>();
+		let generation = 0;
+		let activeSession: string | undefined;
+		const invalidate = () => { generation++; states.clear(); activeSession = undefined; };
+		pi.on("session_start", invalidate);
+		pi.on("session_before_tree", invalidate);
+		pi.on("session_tree", invalidate);
+		pi.on("session_shutdown", invalidate);
 		pi.on("tool_result", (event, context) => {
+			const session = context.sessionManager.getSessionId();
+			if (session !== activeSession) { invalidate(); activeSession = session; }
+			const owner = generation;
 			let root: string;
 			try {
 				root = runtimeRoot(context);
@@ -192,7 +217,7 @@ export function createEvidencePreservingReducerExtension(options: EvidencePreser
 				state = { config, journal: createJournal(pi, config) };
 				states.set(root, state);
 			}
-			return reduceToolResult(state.journal, state.config, event, context);
+			return reduceToolResult(state.journal, state.config, event, context, () => generation === owner && activeSession === session && context.sessionManager.getSessionId() === session);
 		});
 	};
 }
